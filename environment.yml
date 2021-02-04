@@ -1,0 +1,11 @@
+ 
+name: mustlink
+channels:
+  - defaults
+dependencies:
+  - python>=3.6
+  - matplotlib
+  - numpy
+  - pandas
+  - pyyaml
+  - requests
