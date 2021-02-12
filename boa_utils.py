@@ -2,13 +2,13 @@
 """
 boa_utils.py
 
-Mark S. Bentley (mark@lunartech.org), 2019
+Mark S. Bentley (mark@lunartech.org), 2021
 
 A module to use the BOA TAP API and retrieve/plot data.
 
 Basic authentication credentials should be stored in a simple
 YAML file and pointed at by the config_file parameter when
-instantiated the Must class. An example is:
+instantiated the BOA class. An example is:
 
 user:
     login: userone
@@ -16,24 +16,27 @@ user:
 
 """
 
+# built-in module imports
+import os
+from io import BytesIO
+import warnings
+import re
+import logging
+import functools
+
+# external dependencies
 import yaml
 import requests
 from requests.auth import HTTPBasicAuth
-import astropy
 from astropy.io.votable import parse_single_table
-from io import StringIO, BytesIO
-import os
+from astropy.io.votable.exceptions import VOTableSpecWarning
 import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.dates as md
-import warnings
-import re
 
-import logging
+# Set up logging
 log = logging.getLogger(__name__)
-warnings.simplefilter('ignore', category=astropy.io.votable.exceptions.VOTableSpecWarning)
+warnings.simplefilter('ignore', category=VOTableSpecWarning)
 
+# Default URLs - these can be overridden later
 default_url = 'https://boa.esac.esa.int/boa-tap/tap'
 default_dl_url = 'https://boa.esac.esa.int/boa-sl'
 default_config = default_config = os.path.expanduser('~/Dropbox/work/bepi/boa_tap.yml')
@@ -41,7 +44,23 @@ default_config = default_config = os.path.expanduser('~/Dropbox/work/bepi/boa_ta
 # expected timestamp format: 2019-04-27 07:49:11.688
 date_format = '%Y-%m-%d %H:%M:%S.%f'
 
-class BOA_tap:
+def exception(function):
+    """
+    A decorator that wraps the passed in function and handles
+    exceptions raised by requests
+    """
+    @functools.wraps(function)
+    def wrapper(*args, **kwargs):
+        try:
+            return function(*args, **kwargs)
+        except requests.exceptions.HTTPError as e:
+            log.error(e)
+        except requests.exceptions.RequestException as e: 
+            log.error(e)
+    return wrapper
+
+
+class BOA:
 
     def __init__(self, url=default_url, dl_url=default_dl_url, config_file=default_config):
         """The BOA URL instance can be specified, along with a
@@ -76,40 +95,32 @@ class BOA_tap:
 
         return
 
-
+    @exception
     def retrieve_data(self, query, binary=True, dl_path='.', extract=True):
 
         # the BOA retrieval syntax is poor and doesn't take parameters by default
         # but just mashes the query into the URL - so we have to deal with this,
         # but if telemetry packet is requested, and binary is True then we have
-        # to build a proper request with the query encoded in the query parametrer
+        # to build a proper request with the query encoded in the query parameter
 
         if 'boa.telemetry_packet' not in query:
             query = requests.utils.quote(query)
-            try:
-                r = requests.get(url=self._url('/retrieve-data?'+query, dl=True), 
+            r = requests.get(url=self._url('/retrieve-data?'+query, dl=True), 
                     auth=HTTPBasicAuth(self.config['user']['login'], self.config['user']['password']))
-                r.raise_for_status()
-            except (requests.exceptions.RequestException, ConnectionResetError) as err:
-                log.error(err)
-                return None
-            except (requests.exceptions.HTTPError) as err:
-                log.error(err)
-                return None
-
+            r.raise_for_status()
         else:
             default_payload = {
                 'dataformat': 'GDDS' if binary else 'XML'}
             query = {'QUERY': query}
             params = default_payload.copy()
             params.update(query)
+            r = requests.get(url=self._url('/retrieve-data', dl=True), params=params, 
+                auth=HTTPBasicAuth(self.config['user']['login'], self.config['user']['password']))
+            r.raise_for_status()
 
-            try:
-                r = requests.get(url=self._url('/retrieve-data', dl=True), params=params, 
-                    auth=HTTPBasicAuth(self.config['user']['login'], self.config['user']['password']))
-                r.raise_for_status()
-            except (requests.exceptions.RequestException, ConnectionResetError) as err:
-                log.error(err)
+        if not r.status_code // 100 == 2:
+            log.error(r)
+            return None
 
         filename = get_filename_from_cd(r.headers.get('content-disposition'))
         if filename is None:
@@ -133,11 +144,11 @@ class BOA_tap:
             if len(filename)==1:
                 filename = filename[0]
 
-            return filename
+        return filename
 
 
-
-    def make_query(self, query, maxrows=5000):
+    @exception
+    def query(self, query, maxrows=5000):
 
         default_payload = {
             'LANG': 'ADQL',
@@ -148,34 +159,25 @@ class BOA_tap:
         log.debug('Query: {:s}'.format(query['QUERY']))
         params = default_payload.copy()
         params.update(query)
-        try:
-            r = requests.get(url=self._url('/sync'), params=params, 
-                auth=HTTPBasicAuth(self.config['user']['login'], self.config['user']['password']))
-            r.raise_for_status()
-        except (requests.exceptions.RequestException, ConnectionResetError) as err:
-                log.error(err)
+        r = requests.get(url=self._url('/sync'), params=params, 
+            auth=HTTPBasicAuth(self.config['user']['login'], self.config['user']['password']))
+        r.raise_for_status()
+
+        if not r.status_code // 100 == 2:
+            log.error(r)
+            return None
 
         # convert from a votable to an astropy table with to_table()
         table = parse_single_table(BytesIO(r.content), pedantic=False).to_table()
         cols = table.colnames
 
         # convert to a pandas DataFrame. cannot use .to_pandas() directly
-        # since the colums have shape (1,) and pandas cannot handle
+        # since the columns have shape (1,) and pandas cannot handle
         # "multidimensional" columns.
         result = pd.DataFrame([], columns=cols)
         for col in cols:
             result[col] = table[col].data.squeeze()
         # TODO fix this for single value tables!
-
-        # 2021-01-11 - removing this code for now since something has changed in
-        # recently library updates - pandas? astropy? and it is no longer neededc
-        #'
-        # do the unicode conversion for string data types
-        # str_df = result.select_dtypes([np.object])
-        # if len(str_df)>0:
-        #     str_df = str_df.stack().str.decode('utf-8').unstack()        
-        #     for col in str_df:
-        #         result[col] = str_df[col]
 
         return result
 
@@ -183,14 +185,16 @@ class BOA_tap:
     def query_packets(self, start_time=None, stop_time=None, subsys=None, 
         spid=None, apid=None, pkt_type=None, pkt_subtype=None, maxrows=5000,
         reduced=True):
+        """
+        Queries the telemetry packet table in the BOA. By default all packets are
+        queried for the last day. If stop time is not given
+        """
 
         if subsys is not None:
-            subsystems = self.make_query('select distinct subsystem_id from subsystem').subsystem_id.tolist()
+            subsystems = self.query('select distinct subsystem_id from subsystem').subsystem_id.tolist()
             if subsys not in subsystems:
                 log.error('subsystem {:s} is not valid. Should be one of: {:s}'.format(str(subsys), ', '.join(subsystems)))
                 return None
-        else:
-            subsys  = ''
 
         if start_time is None:
             start_time = pd.Timestamp.now() - pd.Timedelta(days=1)
@@ -202,8 +206,11 @@ class BOA_tap:
         elif type(stop_time) == str:
             stop_time = pd.Timestamp(stop_time)
 
-        query = "SELECT * FROM TELEMETRY_PACKET WHERE on_board_time >= '{:s}' and on_board_time <= '{:s}' and subsystem_id='{:s}'".format(
+        query = "SELECT * FROM TELEMETRY_PACKET WHERE on_board_time >= '{:s}' and on_board_time <= '{:s}'".format(
                 start_time.strftime(date_format), stop_time.strftime(date_format), subsys)
+
+        if subsys is not None:
+            query += " and subsystem_id='{:s}'".format(subsys)
 
         if pkt_type is not None:
             query += ' and source_packet_service_type={:d}'.format(pkt_type)
@@ -214,10 +221,10 @@ class BOA_tap:
         if spid is not None:
             query += ' and telemetry_packet_spid={:d}'.format(spid)
 
-#        if order:
-#            query += ' ORDER BY item_id'
-
-        packets = self.make_query(query=query, maxrows=maxrows)
+        log.debug(query)
+        packets = self.query(query=query, maxrows=maxrows)
+        if packets is None:
+            return None
 
         drop_list = ['item_id', 'ground_station_id', 'mib_version', 'inactive',
             'ingested_time', 'bscs_ingestion_time', 'proprietary_end_date', 'retrieval_url',
@@ -246,11 +253,11 @@ def get_events(instr=None, start_time=None, stop_time=None, get_descrip=False):
         try:
             import bepicolombo
         except ModuleNotFoundError:
-            log.warn('bepicolombo module not available, cannot display even descriptions')
+            log.warn('bepicolombo module not available, cannot display event descriptions')
             get_descrip=False
 
-    boa = BOA_tap() 
-    subsys = boa.make_query('select distinct subsystem_id from subsystem')
+    boa = BOA() 
+    subsys = boa.query('select distinct subsystem_id from subsystem')
     if instr not in subsys.subsystem_id.tolist():
         log.error('subsystem {:s} is not valid'.format(str(instr)))
         return None
@@ -266,8 +273,8 @@ def get_events(instr=None, start_time=None, stop_time=None, get_descrip=False):
 
 def get_packets(instr=None, start_time=None, stop_time=None, dl_path='.', binary=True, extract=True):
 
-    boa = BOA_tap() 
-    subsys = boa.make_query('select distinct subsystem_id from subsystem')
+    boa = BOA() 
+    subsys = boa.query('select distinct subsystem_id from subsystem')
     if instr not in subsys.subsystem_id.tolist():
         log.error('subsystem {:s} is not valid'.format(str(instr)))
         return None

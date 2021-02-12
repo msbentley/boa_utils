@@ -15,5 +15,5 @@ setup(name='boa_utils',
     install_requires=['pandas','pyyaml','astropy','numpy','matplotlib','requests'],
     python_requires='>=3.6',
     keywords = ['BOA','archive','BepiColombo'],
-    packages=['boa_utils'],
+#    packages=['boa_utils'],
     zip_safe=False)

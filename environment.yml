@@ -1,11 +1,12 @@
  
-name: mustlink
+name: boa
 channels:
   - defaults
 dependencies:
   - python>=3.6
-  - matplotlib
+  - astropy
   - numpy
   - pandas
+  - matplotlib
   - pyyaml
   - requests
