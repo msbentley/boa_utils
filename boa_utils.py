@@ -103,7 +103,7 @@ class BOA:
         # but if telemetry packet is requested, and binary is True then we have
         # to build a proper request with the query encoded in the query parameter
 
-        if 'boa.telemetry_packet' not in query:
+        if 'telemetry_packet' not in query.lower():
             query = requests.utils.quote(query)
             r = requests.get(url=self._url('/retrieve-data?'+query, dl=True), 
                     auth=HTTPBasicAuth(self.config['user']['login'], self.config['user']['password']))
