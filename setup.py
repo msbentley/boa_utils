@@ -4,14 +4,14 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setup(name='boa_utils',
-    version='0.1',
+    version='1.0-beta',
     author='Mark S. Bentley',
     author_email='mark@lunartech.org',
     description='Utilities to work with the BepiColombo Operational Archive',
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/msbentley/boa_utils",
-    download_url = 'https://github.com/msbentley/boa_utils/archive/0.1.tar.gz',
+    download_url = 'https://github.com/msbentley/boa_utils/archive/v0.1-beta.tar.gz',
     install_requires=['pandas','pyyaml','astropy','numpy','matplotlib','requests'],
     python_requires='>=3.6',
     keywords = ['BOA','archive','BepiColombo'],
