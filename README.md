@@ -60,4 +60,5 @@ user:
 
 ## Example
 
-The Jupyter notebook included with this repository shows an example of how to use the code.  To view the notebook, click [here](https://nbviewer.jupyter.org/github/msbentley/boa_utils/blob/master/boa.ipynb).
+The Jupyter notebook included with this repository shows an example of how to use the code.  To view the notebook, click [here](https://nbviewer.jupyter.org/github/msbentley/boa_utils/blob/main/boa_utils.ipynb).
+
