@@ -41,18 +41,15 @@ The package can then be installed with:
 
 ## URL
 
-The URL for the BOA can be specified when instantiating the BOA_tap class. If none is given, a default URL is used, which corresponds to the default operational server.
+The URL for the BOA can be specified when instantiating the BOA class. If none is given, a default URL is used, which corresponds to the default operational server.
 
 ## Authentication
 
-Access to BOA needs authentication. This is controlled by a config file which can be pointed to by the `config_file` parameter when instantiating the Must class, for example:
+Access to BOA needs authentication. This is controlled by a config file which can be pointed to by the `config_file` parameter when instantiating the BOA class, for example:
 
 ```python
-boa = boa_utils.BOA_tap(config_file='/path/to/a/config_file.yml')
+boa = boa_utils.BOA(config_file='/path/to/a/config_file.yml')
 ```
-
-If nothing is specified, a file `mustlink.yml` is looked for in paths pointed to by the environment variables `APPDATA`, `XDG_CONFIG_HOME` or in the `.config` folder in the user's home directory.
-
 The configuration file should be in YAML format and contain the username and password as follows:
 
 ```yaml
@@ -63,4 +60,4 @@ user:
 
 ## Example
 
-The Jupyter notebook included with this repository shows an example of how to use the code. Note that not all API functions are wrapped by this library, but only those that are commonly used. To view the notebook, click FIXME!!!!!
+The Jupyter notebook included with this repository shows an example of how to use the code.  To view the notebook, click [here](https://nbviewer.jupyter.org/github/msbentley/boa_utils/blob/master/boa.ipynb).
