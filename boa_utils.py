@@ -17,6 +17,7 @@ user:
 """
 
 # built-in module imports
+from multiprocessing import Value
 import os
 from io import BytesIO
 import warnings
@@ -39,7 +40,12 @@ warnings.simplefilter('ignore', category=VOTableSpecWarning)
 # Default URLs - these can be overridden later
 default_url = 'https://boa.esac.esa.int/boa-tap/tap'
 default_dl_url = 'https://boa.esac.esa.int/boa-sl'
-default_config = default_config = os.path.expanduser('~/Dropbox/work/bepi/boa_tap.yml')
+
+default_config = os.path.join(
+    os.environ.get('APPDATA') or
+    os.environ.get('XDG_CONFIG_HOME') or
+    os.path.join(os.environ['HOME'], '.config'),
+    "boa_utils.yml")
 
 # expected timestamp format: 2019-04-27 07:49:11.688
 date_format = '%Y-%m-%d %H:%M:%S.%f'
@@ -97,6 +103,15 @@ class BOA:
 
     @exception
     def retrieve_data(self, query, binary=True, dl_path='.', extract=True):
+        """
+        Retrieves data files from BOA - this can be any auxiliary file, or it
+        can be telemetry packets. If the query contains telemetry_packet, the
+        latter is assumed. In this case the binary boolean flag indicates if
+        either GDDS binary (binary=True) or XML (binary=False) packets should
+        be retrieved. Downloaded files are placed into dl_path. If 
+        extract=True then the resulting tarballs will be unpacked and the
+        end filename(s) returned
+        """
 
         # the BOA retrieval syntax is poor and doesn't take parameters by default
         # but just mashes the query into the URL - so we have to deal with this,
@@ -149,6 +164,11 @@ class BOA:
 
     @exception
     def query(self, query, maxrows=5000):
+        """
+        Makes a simple TAP query to the BOA server and converts the response
+        to a pandas DataFrame. By default this makes a synchronous query and
+        the number of results can be changed by setting maxrows (default 5k)
+        """
 
         default_payload = {
             'LANG': 'ADQL',
@@ -171,15 +191,87 @@ class BOA:
         table = parse_single_table(BytesIO(r.content), pedantic=False).to_table()
         cols = table.colnames
 
-        # convert to a pandas DataFrame. cannot use .to_pandas() directly
-        # since the columns have shape (1,) and pandas cannot handle
-        # "multidimensional" columns.
-        result = pd.DataFrame([], columns=cols)
-        for col in cols:
-            result[col] = table[col].data.squeeze()
-        # TODO fix this for single value tables!
+        # If a single value is returned, simply return this, not a df
+        if len(table)==1 and len(table.columns)==1:
+            result = table[0][0].data[0]
+        else:
+            # convert to a pandas DataFrame. cannot use .to_pandas() directly
+            # since the columns have shape (1,) and pandas cannot handle
+            # "multidimensional" columns.
+            result = pd.DataFrame([], columns=cols)
+            for col in cols:
+                result[col] = table[col].data.squeeze()
 
         return result
+
+
+    @exception
+    def get_tables(self):
+        """Lists the available tables for making meta-data queries"""
+
+        r = requests.get(url=self._url('/tables'),
+            auth=HTTPBasicAuth(self.config['user']['login'], self.config['user']['password']))
+        r.raise_for_status()
+
+        if not r.status_code // 100 == 2:
+            log.error(r)
+            return None
+
+        # this table is NOT a VOTable but some other VO format, so parsing manually
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(r.content)
+
+        table_list = []
+
+        schema = root.findall('schema')
+        for sch in schema:
+            tables = sch.findall('table')
+            for table in tables:
+                table_list.append(
+                    {'schema': sch.find('name').text,
+                     'table': table.find('name').text})
+
+        table_df = pd.DataFrame(table_list, columns=['schema', 'table'])
+        
+        return table_df
+
+
+    def get_columns(self, schema, table):
+        """Lists column meta-data for the given schema/table"""
+
+
+        r = requests.get(url=self._url('/tables'),
+            auth=HTTPBasicAuth(self.config['user']['login'], self.config['user']['password']))
+        r.raise_for_status()
+
+        if not r.status_code // 100 == 2:
+            log.error(r)
+            return None
+
+        # this table is NOT a VOTable but some other VO format, so parsing manually
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(r.content)
+
+        sch = root.find("./schema/[name='{:s}']".format(schema))
+        if sch is None:
+            log.error('could not find schema')
+            raise ValueError
+            return None
+
+        tbl = sch.find(".//table/[name='{:s}']".format(table))
+        if tbl is None:
+            log.error('could not find table')
+            raise ValueError
+            return None
+
+        cols = ['name', 'dataType']
+        cols_df = pd.DataFrame(columns=cols)
+        for i in tbl.findall('column'):
+            cols_df = cols_df.append(
+                pd.Series([i.find('name').text, i.find('dataType').text], 
+                index=cols), ignore_index=True)
+
+        return cols_df
 
 
     def query_packets(self, start_time=None, stop_time=None, subsys=None, 
@@ -271,12 +363,12 @@ def get_events(instr=None, start_time=None, stop_time=None, get_descrip=False):
     return events
 
 
-def get_packets(instr=None, start_time=None, stop_time=None, dl_path='.', binary=True, extract=True):
+def retrieve_packets(subsys=None, start_time=None, stop_time=None, dl_path='.', binary=True, extract=True):
 
     boa = BOA() 
-    subsys = boa.query('select distinct subsystem_id from subsystem')
-    if instr not in subsys.subsystem_id.tolist():
-        log.error('subsystem {:s} is not valid'.format(str(instr)))
+    valid_subsys = boa.query('select distinct subsystem_id from subsystem')
+    if subsys not in valid_subsys.subsystem_id.tolist():
+        log.error('subsystem {:s} is not valid'.format(str(subsys)))
         return None
 
     if start_time is None:
@@ -290,7 +382,7 @@ def get_packets(instr=None, start_time=None, stop_time=None, dl_path='.', binary
         stop_time = pd.Timestamp(stop_time)
 
     query = "SELECT * FROM TELEMETRY_PACKET WHERE on_board_time >= '{:s}' and on_board_time <= '{:s}' and subsystem_id='{:s}'".format(
-            start_time.strftime(date_format), stop_time.strftime(date_format), instr.upper())
+            start_time.strftime(date_format), stop_time.strftime(date_format), subsys.upper())
 
     filename = boa.retrieve_data(query, dl_path=dl_path, binary=binary, extract=extract)
 
