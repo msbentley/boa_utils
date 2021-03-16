@@ -200,7 +200,7 @@ class BOA:
             # "multidimensional" columns.
             result = pd.DataFrame([], columns=cols)
             for col in cols:
-                result[col] = table[col].data.squeeze()
+                result[col] = table[col].flatten()
 
         return result
 
