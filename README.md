@@ -16,12 +16,6 @@ The following dependencies must be met:
 
 ## Installation
 
-### pip
-
-```pip install boa_utils```
-
-should do the job, although creating a dedicated environment is recommended (see below).
-
 ### conda
 
 First, clone this repository. If you are using conda, the dependencies can be installed in a new environment using the provided environment file:
